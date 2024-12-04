@@ -8,6 +8,7 @@ import * as sqs from "aws-cdk-lib/aws-sqs";
 import * as sns from "aws-cdk-lib/aws-sns";
 import * as subs from "aws-cdk-lib/aws-sns-subscriptions";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
 
 import { Construct } from "constructs";
 // import * as sqs from 'aws-cdk-lib/aws-sqs';
@@ -24,10 +25,16 @@ export class EDAAppStack extends cdk.Stack {
 
      // Integration infrastructure
 
-  const imageProcessQueue = new sqs.Queue(this, "img-created-queue", {
-    receiveMessageWaitTime: cdk.Duration.seconds(5),
-  });
+     const dlq = new sqs.Queue(this, "DLQ");
 
+
+     const imageProcessQueue = new sqs.Queue(this, "img-created-queue", {
+      receiveMessageWaitTime: cdk.Duration.seconds(5),
+      deadLetterQueue: {
+        maxReceiveCount: 3,
+        queue: dlq,
+      },
+    });
   const mailerQ = new sqs.Queue(this, "mailer-queue", {
     receiveMessageWaitTime: cdk.Duration.seconds(10),
   });
@@ -41,6 +48,14 @@ export class EDAAppStack extends cdk.Stack {
   );
 
   newImageTopic.addSubscription(new subs.SqsSubscription(mailerQ));
+
+  
+
+  const imagesTable = new dynamodb.Table(this, "ImagesTable", {
+    partitionKey: { name: "imageName", type: dynamodb.AttributeType.STRING },
+    removalPolicy: cdk.RemovalPolicy.DESTROY,
+    billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+  });
 
   // Lambda functions
 
@@ -61,6 +76,48 @@ export class EDAAppStack extends cdk.Stack {
     timeout: cdk.Duration.seconds(3),
     entry: `${__dirname}/../lambdas/mailer.ts`,
   });
+
+  const logImageFn = new lambdanode.NodejsFunction(this, "LogImageFn", {
+    runtime: lambda.Runtime.NODEJS_18_X,
+    entry: `${__dirname}/../lambdas/logImage.ts`,
+    timeout: cdk.Duration.seconds(10),
+    environment: {
+      IMAGES_TABLE_NAME: imagesTable.tableName,
+    },
+  });
+
+  const rejectionMailerFn = new lambdanode.NodejsFunction(this, "RejectionMailerFn", {
+    runtime: lambda.Runtime.NODEJS_18_X,
+    entry: `${__dirname}/../lambdas/rejectionMailer.ts`,
+    environment: {
+      SES_REGION: 'eu-west-1',
+      SES_EMAIL_FROM: 'gjorgievgjorgi2002@gmail.com',
+      SES_EMAIL_TO: 'gjorgievgjorgi2002@gmail.com',
+    },
+  });
+
+  const updateImageMetadataFn = new lambdanode.NodejsFunction(this, "UpdateImageMetadataFn", {
+    runtime: lambda.Runtime.NODEJS_18_X,
+    entry: `${__dirname}/../lambdas/updateImageMetadata.ts`,
+    timeout: cdk.Duration.seconds(15),
+    memorySize: 128,
+    environment: {
+      IMAGES_TABLE_NAME: imagesTable.tableName,
+    },
+  });
+
+  
+
+  const logImageEventSource = new events.SqsEventSource(imageProcessQueue, {
+    batchSize: 5,
+  });
+  logImageFn.addEventSource(logImageEventSource);
+
+  
+const dlqEventSource = new events.SqsEventSource(dlq, {
+  batchSize: 5,
+});
+rejectionMailerFn.addEventSource(dlqEventSource);
 
   // S3 --> SQS
   imagesBucket.addEventNotification(
@@ -85,7 +142,11 @@ export class EDAAppStack extends cdk.Stack {
 
   // Permissions
 
+  newImageTopic.addSubscription(new subs.LambdaSubscription(mailerFn));
+  newImageTopic.addSubscription(new subs.LambdaSubscription(updateImageMetadataFn));
+
   imagesBucket.grantRead(processImageFn);
+  imagesTable.grantReadWriteData(updateImageMetadataFn);
 
   mailerFn.addToRolePolicy(
     new iam.PolicyStatement({
@@ -95,6 +156,22 @@ export class EDAAppStack extends cdk.Stack {
         "ses:SendRawEmail",
         "ses:SendTemplatedEmail",
       ],
+      resources: ["*"],
+    })
+  );
+
+  logImageFn.addToRolePolicy(
+    new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ["dynamodb:PutItem"],
+      resources: [imagesTable.tableArn],
+    })
+  );
+
+  rejectionMailerFn.addToRolePolicy(
+    new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ["ses:SendEmail", "ses:SendRawEmail"],
       resources: ["*"],
     })
   );

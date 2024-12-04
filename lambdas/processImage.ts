@@ -23,6 +23,11 @@ export const handler: SQSHandler = async (event) => {
         const srcBucket = s3e.bucket.name;
         // Object key may have spaces or unicode non-ASCII characters.
         const srcKey = decodeURIComponent(s3e.object.key.replace(/\+/g, " "));
+        const fileExtension = srcKey.split('.').pop()?.toLowerCase();
+        if (fileExtension === 'gif') {
+          console.error(`File ${srcKey} is a GIF, rejecting...`);
+          throw new Error('GIF files are not supported.');
+        }
         let origimage = null;
         try {
           // Download the image from the S3 source bucket.
@@ -31,9 +36,11 @@ export const handler: SQSHandler = async (event) => {
             Key: srcKey,
           };
           origimage = await s3.send(new GetObjectCommand(params));
+          console.log(`Successfully processed file: ${srcKey}`);
           // Process the image ......
         } catch (error) {
-          console.log(error);
+          console.error(`Error processing file ${srcKey}:`, error);
+          throw error;
         }
       }
     }

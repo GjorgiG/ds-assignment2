@@ -1,46 +1,53 @@
-/* eslint-disable import/extensions, import/no-absolute-path */
 import { SQSHandler } from "aws-lambda";
-import {
-  GetObjectCommand,
-  PutObjectCommandInput,
-  GetObjectCommandInput,
-  S3Client,
-  PutObjectCommand,
-} from "@aws-sdk/client-s3";
+import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
+import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
+const dynamodb = new DynamoDBClient({});
 const s3 = new S3Client();
 
 export const handler: SQSHandler = async (event) => {
-  console.log("Event ", JSON.stringify(event));
+  console.log("Event: ", JSON.stringify(event));
+
   for (const record of event.Records) {
-    const recordBody = JSON.parse(record.body);        // Parse SQS message
-    const snsMessage = JSON.parse(recordBody.Message); // Parse SNS message
+    const recordBody = JSON.parse(record.body);
+    const snsMessage = JSON.parse(recordBody.Message);
 
     if (snsMessage.Records) {
-      console.log("Record body ", JSON.stringify(snsMessage));
       for (const messageRecord of snsMessage.Records) {
-        const s3e = messageRecord.s3;
-        const srcBucket = s3e.bucket.name;
-        // Object key may have spaces or unicode non-ASCII characters.
-        const srcKey = decodeURIComponent(s3e.object.key.replace(/\+/g, " "));
-        const fileExtension = srcKey.split('.').pop()?.toLowerCase();
-        if (fileExtension === 'gif') {
-          console.error(`File ${srcKey} is a GIF, rejecting...`);
-          throw new Error('GIF files are not supported.');
+        const s3Object = messageRecord.s3.object;
+        const objectKey = decodeURIComponent(s3Object.key.replace(/\+/g, " "));
+        const fileExtension = objectKey.split(".").pop()?.toLowerCase();
+        const bucketName = messageRecord.s3.bucket.name;
+
+        if (fileExtension !== "jpeg" && fileExtension !== "png") {
+          console.error(`Invalid file type: ${fileExtension}`);
+          continue; 
         }
-        let origimage = null;
+
         try {
-          // Download the image from the S3 source bucket.
-          const params: GetObjectCommandInput = {
-            Bucket: srcBucket,
-            Key: srcKey,
+          
+          const timestamp = new Date().toISOString();
+          await dynamodb.send(
+            new PutItemCommand({
+              TableName: process.env.IMAGES_TABLE_NAME,
+              Item: {
+                imageName: { S: objectKey },
+                uploadedAt: { S: timestamp },
+                status: { S: "pending_metadata" }, 
+              },
+            })
+          );
+          console.log(`Image recorded in DynamoDB: ${objectKey}`);
+
+          
+          const getObjectParams = {
+            Bucket: bucketName,
+            Key: objectKey,
           };
-          origimage = await s3.send(new GetObjectCommand(params));
-          console.log(`Successfully processed file: ${srcKey}`);
-          // Process the image ......
-        } catch (error) {
-          console.error(`Error processing file ${srcKey}:`, error);
-          throw error;
+          const objectData = await s3.send(new GetObjectCommand(getObjectParams));
+          console.log(`Object validated: ${objectKey}`);
+        } catch (err) {
+          console.error("Error writing to DynamoDB or validating object:", err);
         }
       }
     }

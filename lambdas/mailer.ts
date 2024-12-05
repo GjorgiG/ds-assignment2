@@ -38,7 +38,7 @@ export const handler: SQSHandler = async (event) => {
 
     const emailParams = {
       Destination: {
-        ToAddresses: [toAddress], // Guaranteed to be a valid string
+        ToAddresses: [toAddress],
       },
       Message: {
         Body: {

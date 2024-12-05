@@ -144,6 +144,7 @@ rejectionMailerFn.addEventSource(dlqEventSource);
 
   newImageTopic.addSubscription(new subs.LambdaSubscription(mailerFn));
   newImageTopic.addSubscription(new subs.LambdaSubscription(updateImageMetadataFn));
+  processImageFn.addEnvironment("IMAGES_TABLE_NAME", imagesTable.tableName);
 
   imagesBucket.grantRead(processImageFn);
   imagesTable.grantReadWriteData(updateImageMetadataFn);
@@ -173,6 +174,22 @@ rejectionMailerFn.addEventSource(dlqEventSource);
       effect: iam.Effect.ALLOW,
       actions: ["ses:SendEmail", "ses:SendRawEmail"],
       resources: ["*"],
+    })
+  );
+
+  processImageFn.addToRolePolicy(
+    new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ["dynamodb:UpdateItem"],
+      resources: [imagesTable.tableArn],
+    })
+  );
+
+  updateImageMetadataFn.addToRolePolicy(
+    new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ["dynamodb:UpdateItem"],
+      resources: [imagesTable.tableArn],
     })
   );
 

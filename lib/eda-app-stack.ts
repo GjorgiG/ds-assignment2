@@ -55,6 +55,7 @@ export class EDAAppStack extends cdk.Stack {
     partitionKey: { name: "imageName", type: dynamodb.AttributeType.STRING },
     removalPolicy: cdk.RemovalPolicy.DESTROY,
     billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+    stream: dynamodb.StreamViewType.NEW_IMAGE,
   });
 
   // Lambda functions
@@ -119,9 +120,19 @@ const dlqEventSource = new events.SqsEventSource(dlq, {
 });
 rejectionMailerFn.addEventSource(dlqEventSource);
 
+const dynamoEventSource = new events.DynamoEventSource(imagesTable, {
+  startingPosition: lambda.StartingPosition.LATEST,
+});
+mailerFn.addEventSource(dynamoEventSource);
+
   // S3 --> SQS
   imagesBucket.addEventNotification(
     s3.EventType.OBJECT_CREATED,
+    new s3n.SnsDestination(newImageTopic)
+  );
+
+  imagesBucket.addEventNotification(
+    s3.EventType.OBJECT_REMOVED,
     new s3n.SnsDestination(newImageTopic)
   );
 
@@ -145,9 +156,12 @@ rejectionMailerFn.addEventSource(dlqEventSource);
   newImageTopic.addSubscription(new subs.LambdaSubscription(mailerFn));
   newImageTopic.addSubscription(new subs.LambdaSubscription(updateImageMetadataFn));
   processImageFn.addEnvironment("IMAGES_TABLE_NAME", imagesTable.tableName);
+  
 
   imagesBucket.grantRead(processImageFn);
   imagesTable.grantReadWriteData(updateImageMetadataFn);
+  imagesTable.grantStreamRead(mailerFn);
+  imagesTable.grantReadWriteData(processImageFn); 
 
   mailerFn.addToRolePolicy(
     new iam.PolicyStatement({
@@ -181,6 +195,14 @@ rejectionMailerFn.addEventSource(dlqEventSource);
     new iam.PolicyStatement({
       effect: iam.Effect.ALLOW,
       actions: ["dynamodb:UpdateItem"],
+      resources: [imagesTable.tableArn],
+    })
+  );
+
+  processImageFn.addToRolePolicy(
+    new iam.PolicyStatement({
+      effect: iam.Effect.ALLOW,
+      actions: ["dynamodb:DeleteItem", "dynamodb:PutItem"],
       resources: [imagesTable.tableArn],
     })
   );

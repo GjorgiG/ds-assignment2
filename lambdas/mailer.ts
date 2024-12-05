@@ -5,14 +5,11 @@ const ses = new SESClient({ region: process.env.SES_REGION });
 
 export const handler: SQSHandler = async (event) => {
   console.log("Event: ", JSON.stringify(event));
-  
+
   for (const record of event.Records) {
     const recordBody = JSON.parse(record.body);
-    console.log("Parsed record body:", recordBody); 
-    
-    const uploadStatus = recordBody.uploadStatus;
-    const errorMessage = recordBody.errorMessage;
-    
+    const { uploadStatus, errorMessage } = recordBody;
+
     const toAddress = process.env.SES_EMAIL_TO;
     const fromAddress = process.env.SES_EMAIL_FROM;
 
@@ -26,8 +23,7 @@ export const handler: SQSHandler = async (event) => {
 
     if (uploadStatus === 'failure') {
       subject = "File Upload Rejected";
-      message = errorMessage;
-        `Your file upload was rejected due to the following reason: Invalid file type.` ; 
+      message = `Your file upload was rejected due to the following reason: ${errorMessage}`;
     } else if (uploadStatus === 'success') {
       subject = "File Upload Successful";
       message = 'Your file upload was successful!';

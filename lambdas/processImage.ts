@@ -1,5 +1,5 @@
 import { SQSHandler } from "aws-lambda";
-import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
+import { DynamoDBClient, DeleteItemCommand, PutItemCommand } from "@aws-sdk/client-dynamodb";
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 
 const dynamodb = new DynamoDBClient({});
@@ -14,42 +14,48 @@ export const handler: SQSHandler = async (event) => {
 
     if (snsMessage.Records) {
       for (const messageRecord of snsMessage.Records) {
-        const s3Object = messageRecord.s3.object;
-        const objectKey = decodeURIComponent(s3Object.key.replace(/\+/g, " "));
-        const fileExtension = objectKey.split(".").pop()?.toLowerCase();
-        const bucketName = messageRecord.s3.bucket.name;
+        const { eventName, s3: s3Event } = messageRecord;
+        const objectKey = decodeURIComponent(s3Event.object.key.replace(/\+/g, " "));
+        const bucketName = s3Event.bucket.name;
 
+        if (eventName === "ObjectRemoved:Delete") {
+          // Handle DeleteObject event
+          try {
+            await dynamodb.send(
+              new DeleteItemCommand({
+                TableName: process.env.IMAGES_TABLE_NAME,
+                Key: { imageName: { S: objectKey } },
+              })
+            );
+            console.log(`Image deleted from DynamoDB: ${objectKey}`);
+          } catch (err) {
+            console.error("Error deleting from DynamoDB:", err);
+          }
+          continue;
+        }
+
+        // Handle ObjectCreated event
+        const fileExtension = objectKey.split(".").pop()?.toLowerCase();
         if (fileExtension !== "jpeg" && fileExtension !== "png") {
           console.error(`Invalid file type: ${fileExtension}`);
-          continue; 
+          continue;
         }
 
         try {
-          
-          const timestamp = new Date().toISOString();
           await dynamodb.send(
             new PutItemCommand({
               TableName: process.env.IMAGES_TABLE_NAME,
               Item: {
                 imageName: { S: objectKey },
-                uploadedAt: { S: timestamp },
-                status: { S: "pending_metadata" }, 
               },
             })
           );
           console.log(`Image recorded in DynamoDB: ${objectKey}`);
-
-          
-          const getObjectParams = {
-            Bucket: bucketName,
-            Key: objectKey,
-          };
-          const objectData = await s3.send(new GetObjectCommand(getObjectParams));
-          console.log(`Object validated: ${objectKey}`);
         } catch (err) {
-          console.error("Error writing to DynamoDB or validating object:", err);
+          console.error("Error writing to DynamoDB:", err);
         }
       }
     }
   }
 };
+

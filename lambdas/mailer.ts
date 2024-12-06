@@ -1,59 +1,99 @@
 import { SQSHandler } from "aws-lambda";
-import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
+import { SES_EMAIL_FROM, SES_EMAIL_TO, SES_REGION } from "../env";
+import {
+  SESClient,
+  SendEmailCommand,
+  SendEmailCommandInput,
+} from "@aws-sdk/client-ses";
 
-const ses = new SESClient({ region: process.env.SES_REGION });
+if (!SES_EMAIL_TO || !SES_EMAIL_FROM || !SES_REGION) {
+  throw new Error(
+    "Please add the SES_EMAIL_TO, SES_EMAIL_FROM and SES_REGION environment variables in an env.js file located in the root directory"
+  );
+}
 
-export const handler: SQSHandler = async (event) => {
-  console.log("Event: ", JSON.stringify(event));
+type ContactDetails = {
+  name: string;
+  email: string;
+  message: string;
+};
+
+const client = new SESClient({ region: SES_REGION });
+
+export const handler: SQSHandler = async (event: any) => {
+  console.log("Event ", JSON.stringify(event));
 
   for (const record of event.Records) {
     const recordBody = JSON.parse(record.body);
-    const { uploadStatus, errorMessage } = recordBody;
+    const snsMessage = JSON.parse(recordBody.Message);
 
-    const toAddress = process.env.SES_EMAIL_TO;
-    const fromAddress = process.env.SES_EMAIL_FROM;
+    if (snsMessage.Records) {
+      console.log("Record body ", JSON.stringify(snsMessage));
 
-    if (!toAddress || !fromAddress) {
-      console.error("Email addresses are not defined in environment variables.");
-      continue;
-    }
+      for (const messageRecord of snsMessage.Records) {
+        const s3e = messageRecord.s3;
+        const srcBucket = s3e.bucket.name;
+        const srcKey = decodeURIComponent(s3e.object.key.replace(/\+/g, " "));
 
-    let subject = '';
-    let message = '';
+        try {
+          const fileExtension = srcKey.split(".").pop()?.toLowerCase();
 
-    if (uploadStatus === 'failure') {
-      subject = "File Upload Rejected";
-      message = `Your file upload was rejected due to the following reason: ${errorMessage}`;
-    } else if (uploadStatus === 'success') {
-      subject = "File Upload Successful";
-      message = 'Your file upload was successful!';
-    } else {
-      console.error("Unknown upload status:", uploadStatus);
-      continue;
-    }
+          // Skip sending this email for wrong filetype
+          if (fileExtension !== "jpeg" && fileExtension !== "png") {
+            console.error(`Invalid file type: ${fileExtension}`);
+            continue; 
+          }
 
-    const emailParams = {
-      Destination: {
-        ToAddresses: [toAddress],
-      },
-      Message: {
-        Body: {
-          Text: {
-            Data: message,
-          },
-        },
-        Subject: {
-          Data: subject,
-        },
-      },
-      Source: fromAddress,
-    };
+          // Send success email
+          const { name, email, message }: ContactDetails = {
+            name: "The Photo Album",
+            email: SES_EMAIL_FROM,
+            message: `We received your image. Its URL is s3://${srcBucket}/${srcKey}`,
+          };
+          const params = sendEmailParams({ name, email, message });
+          await client.send(new SendEmailCommand(params));
 
-    try {
-      await ses.send(new SendEmailCommand(emailParams));
-      console.log(`${subject} email sent.`);
-    } catch (err) {
-      console.error("Error sending email:", err);
+        } catch (error: unknown) {
+          console.log("Error processing the email: ", error);
+        }
+      }
     }
   }
 };
+
+function sendEmailParams({ name, email, message }: ContactDetails) {
+  const parameters: SendEmailCommandInput = {
+    Destination: {
+      ToAddresses: [SES_EMAIL_TO],
+    },
+    Message: {
+      Body: {
+        Html: {
+          Charset: "UTF-8",
+          Data: getHtmlContent({ name, email, message }),
+        },
+      },
+      Subject: {
+        Charset: "UTF-8",
+        Data: `New Image Upload`,
+      },
+    },
+    Source: SES_EMAIL_FROM,
+  };
+  return parameters;
+}
+
+function getHtmlContent({ name, email, message }: ContactDetails) {
+  return `
+    <html>
+      <body>
+        <h2>Sent from:</h2>
+        <ul>
+          <li style="font-size:18px">👤 <b>${name}</b></li>
+          <li style="font-size:18px">✉️ <b>${email}</b></li>
+        </ul>
+        <p style="font-size:18px">${message}</p>
+      </body>
+    </html> 
+  `;
+}

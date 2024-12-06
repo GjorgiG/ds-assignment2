@@ -12,9 +12,10 @@ export const handler: SQSHandler = async (event) => {
     if (snsMessage.Records) {
       for (const messageRecord of snsMessage.Records) {
         const s3Object = messageRecord.s3.object;
-        const objectKey = decodeURIComponent(s3Object.key.replace(/\+/g, " "));
+        const objectKey = decodeURIComponent(s3Object.key.replace(/\+/g, " "));  // this decodes it to handle special characters
         const fileExtension = objectKey.split(".").pop()?.toLowerCase();
 
+        // only allows jpeg and png
         if (fileExtension !== "jpeg" && fileExtension !== "png") {
           throw new Error(`Invalid file type: ${fileExtension}`);
         }

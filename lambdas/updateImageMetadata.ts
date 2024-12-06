@@ -9,6 +9,7 @@ export const handler: SNSHandler = async (event) => {
   for (const record of event.Records) {
     const snsMessage = JSON.parse(record.Sns.Message);
 
+    // extracts metadata
     const metadataType = record.Sns.MessageAttributes?.metadata_type?.Value;
 
     const imageId = snsMessage.id;
@@ -35,6 +36,7 @@ export const handler: SNSHandler = async (event) => {
         },
       };
 
+      // updates table
       try {
         await dynamoDb.send(new UpdateItemCommand(updateParams));
         console.log(`Successfully updated metadata for image ${imageId}`);

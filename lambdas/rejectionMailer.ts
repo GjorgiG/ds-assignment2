@@ -1,7 +1,8 @@
 import { SQSHandler } from "aws-lambda";
 import { SESClient, SendEmailCommand } from "@aws-sdk/client-ses";
+import { SES_EMAIL_FROM, SES_EMAIL_TO, SES_REGION } from "../env";
 
-const ses = new SESClient({ region: process.env.SES_REGION });
+const ses = new SESClient({ region: SES_REGION });
 
 export const handler: SQSHandler = async (event) => {
   console.log("Event: ", JSON.stringify(event));
@@ -12,8 +13,8 @@ export const handler: SQSHandler = async (event) => {
     console.log("Error message:", errorMessage);
 
    
-    const toAddress = process.env.SES_EMAIL_TO;
-    const fromAddress = process.env.SES_EMAIL_FROM;
+    const toAddress = SES_EMAIL_TO;
+    const fromAddress = SES_EMAIL_FROM;
 
     if (!toAddress || !fromAddress) {
       console.error("Email addresses are not defined in environment variables.");

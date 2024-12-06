@@ -159,9 +159,11 @@ mailerFn.addEventSource(dynamoEventSource);
   
 
   imagesBucket.grantRead(processImageFn);
+  imagesBucket.grantRead(rejectionMailerFn);
   imagesTable.grantReadWriteData(updateImageMetadataFn);
   imagesTable.grantStreamRead(mailerFn);
   imagesTable.grantReadWriteData(processImageFn); 
+  imagesTable.grantReadWriteData(rejectionMailerFn); 
 
   mailerFn.addToRolePolicy(
     new iam.PolicyStatement({
